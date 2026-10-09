@@ -209,6 +209,13 @@
   • This device is on the same WiFi as the printer<br>
   • The printer is powered on and WiFi is connected<br>
   • The IP address above is correct (print a config label to verify)
+  <div id="trustHelp" style="display:none; margin-top:10px;">
+    <strong>First time on this device?</strong> The printer uses its own security certificate,
+    so this device has to accept it once:<br>
+    1. Tap <a href="#" onclick="trustPrinter(); return false;" style="color:#92400e; font-weight:700;">Open printer page</a><br>
+    2. On the warning, tap <em>Advanced</em> → <em>Proceed</em> (Chrome) or <em>Show Details</em> → <em>visit this website</em> (iPhone)<br>
+    3. Come back here and tap <strong>Connect</strong> again
+  </div>
 </div>
 
 <!-- Barcode input -->
@@ -265,10 +272,23 @@
     try { localStorage.setItem('zq511_ip', ipInput.value.trim()); } catch (e) {}
   });
 
-  function getPrinterUrl() {
-    const ip = document.getElementById('ipInput').value.trim();
-    return 'http://' + ip + '/pstprnt';
+  // A secure (https) page such as GitHub Pages may not call http:// addresses,
+  // so talk to the printer over its own HTTPS port in that case.
+  const PRINTER_SCHEME = location.protocol === 'https:' ? 'https://' : 'http://';
+
+  function getPrinterBase() {
+    return PRINTER_SCHEME + document.getElementById('ipInput').value.trim();
   }
+
+  function getPrinterUrl() {
+    return getPrinterBase() + '/pstprnt';
+  }
+
+  function trustPrinter() {
+    window.open(getPrinterBase() + '/', '_blank');
+  }
+
+  if (PRINTER_SCHEME === 'https://') document.getElementById('trustHelp').style.display = '';
 
   function escapeHtml(s) {
     return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -283,7 +303,7 @@
     try {
       // Send empty ZPL ping. The printer sends no CORS headers, so use no-cors:
       // the fetch resolves (opaque) if the printer is reachable and rejects if not.
-      await fetch('http://' + ip + '/pstprnt', {
+      await fetch(getPrinterUrl(), {
         method: 'POST',
         mode: 'no-cors',
         body: '',
