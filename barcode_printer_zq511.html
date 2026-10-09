@@ -185,7 +185,7 @@
 
 <div class="header">
   <div>
-    <h1>Label Printer</h1>
+    <h1 id="appTitle" style="user-select:none; -webkit-user-select:none;">Label Printer</h1>
     <p>Zebra ZQ511 · 2×3 label</p>
   </div>
   <div class="printer-status" id="printerStatus" onclick="checkPrinter()">
@@ -246,6 +246,35 @@
 
   <button class="print-btn" id="printBtn" onclick="printLabel()" disabled>
     🖨️ Print Label
+  </button>
+</div>
+
+<!-- Hidden image mode (tap the title 5 times) -->
+<div class="card" id="imageCard" style="display:none">
+  <div class="label">Emoji</div>
+  <div class="desc-row">
+    <input type="text" id="emojiInput" placeholder="Type or paste an emoji, e.g. 🍕"
+      autocomplete="off" oninput="onEmojiInput()" />
+  </div>
+
+  <div class="label">Or choose an image</div>
+  <div class="desc-row">
+    <input type="file" id="imageFile" accept="image/*" onchange="onImageFile(this)" />
+  </div>
+
+  <div class="label">Number of copies</div>
+  <div class="qty-row">
+    <input type="number" id="imgQtyInput" value="1" min="1" max="99" />
+    <label>label(s)</label>
+  </div>
+
+  <div class="bc-preview">
+    <div class="bc-placeholder" id="imgPlaceholder">Pick an emoji or image<br>to see how it will print</div>
+    <canvas id="imgPreview" style="display:none; max-width:100%; height:auto; background:#fff; border:1px solid #eee;"></canvas>
+  </div>
+
+  <button class="print-btn" id="imgPrintBtn" onclick="printImage()" disabled>
+    🖨️ Print Image
   </button>
 </div>
 
@@ -402,8 +431,19 @@
     btn.disabled = true;
     btn.textContent = '⏳ Sending...';
 
-    const zpl = buildZPL(code, qty, desc);
+    if (await sendZPL(buildZPL(code, qty, desc), qty)) {
+      addHistory(code, qty, desc);
+      document.getElementById('codeInput').value = '';
+      document.getElementById('descInput').value = '';
+      onCodeInput();
+    }
 
+    btn.disabled = false;
+    btn.textContent = '🖨️ Print Label';
+  }
+
+  // Sends ZPL to the printer and updates status/toast. Returns true on success.
+  async function sendZPL(zpl, qty) {
     try {
       // no-cors: the printer sends no CORS headers; a rejection here means
       // the printer could not be reached at all.
@@ -412,22 +452,154 @@
         mode: 'no-cors',
         headers: { 'Content-Type': 'text/plain' },
         body: zpl,
-        signal: AbortSignal.timeout(6000)
+        signal: AbortSignal.timeout(10000)
       });
       showToast('✓ ' + qty + ' label' + (qty > 1 ? 's' : '') + ' sent!', 'success');
       setStatus('connected', document.getElementById('ipInput').value.trim());
-      addHistory(code, qty, desc);
-      document.getElementById('codeInput').value = '';
-      document.getElementById('descInput').value = '';
-      onCodeInput();
+      return true;
     } catch (e) {
       showToast('✗ Could not reach printer', 'error');
       setStatus('error', 'Offline');
       document.getElementById('connHelp').classList.add('show');
+      return false;
+    }
+  }
+
+  // ── Hidden image mode: tap the "Label Printer" title 5 times ──
+  const IMG_W = PW, IMG_H = 386;   // printed at ^FO0,10 on the 406-dot label
+  const EMOJI_FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  let imgSource = null;            // { type: 'emoji', text } or { type: 'image', img }
+  let imgBits = null;              // packed 1-bit rows, ready for ^GFA
+  let titleTaps = 0, titleTapTimer = null;
+
+  document.getElementById('appTitle').addEventListener('click', () => {
+    titleTaps++;
+    clearTimeout(titleTapTimer);
+    titleTapTimer = setTimeout(() => { titleTaps = 0; }, 1500);
+    if (titleTaps < 5) return;
+    titleTaps = 0;
+    const card = document.getElementById('imageCard');
+    const show = card.style.display === 'none';
+    card.style.display = show ? '' : 'none';
+    showToast(show ? 'Image mode on' : 'Image mode off', 'info');
+    if (show) card.scrollIntoView({ behavior: 'smooth' });
+  });
+
+  function onEmojiInput() {
+    const text = document.getElementById('emojiInput').value.trim();
+    document.getElementById('imageFile').value = '';
+    imgSource = text ? { type: 'emoji', text } : null;
+    renderImage();
+  }
+
+  function onImageFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(img.src);
+      document.getElementById('emojiInput').value = '';
+      imgSource = { type: 'image', img };
+      renderImage();
+    };
+    img.onerror = () => showToast('✗ Could not open that image', 'error');
+    img.src = URL.createObjectURL(file);
+  }
+
+  // Draws the source on a white canvas, converts it to black/white with
+  // Floyd–Steinberg dithering, shows the result, and stores the packed bits.
+  function renderImage() {
+    const preview = document.getElementById('imgPreview');
+    const btn = document.getElementById('imgPrintBtn');
+    if (!imgSource) {
+      preview.style.display = 'none';
+      document.getElementById('imgPlaceholder').style.display = '';
+      imgBits = null;
+      btn.disabled = true;
+      return;
     }
 
+    const work = document.createElement('canvas');
+    work.width = IMG_W; work.height = IMG_H;
+    const ctx = work.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, IMG_W, IMG_H);
+
+    if (imgSource.type === 'emoji') {
+      let size = IMG_H * 0.9;
+      ctx.font = size + 'px ' + EMOJI_FONT;
+      const w = ctx.measureText(imgSource.text).width;
+      if (w > IMG_W * 0.95) size *= (IMG_W * 0.95) / w;
+      ctx.font = size + 'px ' + EMOJI_FONT;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#000';
+      ctx.fillText(imgSource.text, IMG_W / 2, IMG_H / 2 + size * 0.05);
+    } else {
+      const img = imgSource.img;
+      const scale = Math.min(IMG_W / img.width, IMG_H / img.height);
+      const w = img.width * scale, h = img.height * scale;
+      ctx.drawImage(img, (IMG_W - w) / 2, (IMG_H - h) / 2, w, h);
+    }
+
+    const data = ctx.getImageData(0, 0, IMG_W, IMG_H);
+    const px = data.data;
+    const gray = new Float32Array(IMG_W * IMG_H);
+    for (let i = 0; i < gray.length; i++) {
+      const a = px[i * 4 + 3] / 255;
+      const lum = 0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2];
+      gray[i] = lum * a + 255 * (1 - a);
+    }
+
+    const rowBytes = IMG_W / 8;
+    const bits = new Uint8Array(rowBytes * IMG_H);
+    for (let y = 0; y < IMG_H; y++) {
+      for (let x = 0; x < IMG_W; x++) {
+        const i = y * IMG_W + x;
+        const black = gray[i] < 128;
+        const err = gray[i] - (black ? 0 : 255);
+        if (x + 1 < IMG_W) gray[i + 1] += err * 7 / 16;
+        if (y + 1 < IMG_H) {
+          if (x > 0) gray[i + IMG_W - 1] += err * 3 / 16;
+          gray[i + IMG_W] += err * 5 / 16;
+          if (x + 1 < IMG_W) gray[i + IMG_W + 1] += err * 1 / 16;
+        }
+        if (black) bits[y * rowBytes + (x >> 3)] |= 0x80 >> (x & 7);
+        const v = black ? 0 : 255;
+        px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = v;
+        px[i * 4 + 3] = 255;
+      }
+    }
+
+    preview.width = IMG_W; preview.height = IMG_H;
+    preview.getContext('2d').putImageData(data, 0, 0);
+    preview.style.display = '';
+    document.getElementById('imgPlaceholder').style.display = 'none';
+    imgBits = bits;
     btn.disabled = false;
-    btn.textContent = '🖨️ Print Label';
+  }
+
+  function buildImageZPL(bits, qty) {
+    const rowBytes = IMG_W / 8;
+    let hex = '';
+    for (let i = 0; i < bits.length; i++) hex += (bits[i] < 16 ? '0' : '') + bits[i].toString(16);
+    return [
+      '^XA', '^MMT', '^PW' + PW, '^LL406', '^LS0',
+      '^FO0,10',
+      '^GFA,' + bits.length + ',' + bits.length + ',' + rowBytes + ',' + hex.toUpperCase() + '^FS',
+      '^PQ' + qty + ',0,1,Y', '^XZ'
+    ].join('\n');
+  }
+
+  async function printImage() {
+    if (!imgBits) return;
+    const qty = parseInt(document.getElementById('imgQtyInput').value) || 1;
+    const btn = document.getElementById('imgPrintBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Sending...';
+    await sendZPL(buildImageZPL(imgBits, qty), qty);
+    btn.disabled = false;
+    btn.textContent = '🖨️ Print Image';
   }
 
   // ── History ──
