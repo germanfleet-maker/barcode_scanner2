@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#1a1a2e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Label Printer">
+<title>Label Printer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f0f2f5;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 60px;
+  }
+
+  .header {
+    width: 100%; max-width: 480px; margin-bottom: 20px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .header h1 { font-size: 20px; font-weight: 700; color: #1a1a2e; }
+  .header p { font-size: 12px; color: #888; margin-top: 2px; }
+
+  .printer-status {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600;
+    padding: 5px 10px; border-radius: 20px;
+    border: 1.5px solid #e5e7eb; background: #fff;
+    cursor: pointer; white-space: nowrap;
+  }
+  .printer-status .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; flex-shrink: 0;
+  }
+  .printer-status.connected .dot { background: #22c55e; }
+  .printer-status.connected { border-color: #86efac; color: #15803d; background: #f0fdf4; }
+  .printer-status.error .dot { background: #ef4444; }
+  .printer-status.error { border-color: #fca5a5; color: #dc2626; background: #fef2f2; }
+
+  .card {
+    background: #fff; border-radius: 16px; padding: 24px;
+    width: 100%; max-width: 480px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+    margin-bottom: 16px;
+  }
+
+  .label {
+    font-size: 11px; font-weight: 600; color: #999;
+    text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px;
+  }
+
+  .ip-row {
+    display: flex; gap: 8px; margin-bottom: 16px; align-items: center;
+  }
+  .ip-row input {
+    flex: 1; padding: 10px 12px;
+    border: 1.5px solid #e5e7eb; border-radius: 10px;
+    font-size: 14px; font-family: 'Courier New', monospace;
+    color: #1a1a2e; outline: none; background: #fafafa;
+    transition: border-color 0.15s;
+  }
+  .ip-row input:focus { border-color: #2563eb; background: #fff; }
+  .btn-check {
+    padding: 10px 14px; background: #1a1a2e; color: #fff;
+    border: none; border-radius: 10px; font-size: 13px; font-weight: 600;
+    cursor: pointer; white-space: nowrap;
+  }
+  .btn-check:hover { background: #2d2d4e; }
+
+  .qty-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .qty-row label { font-size: 13px; color: #555; font-weight: 500; white-space: nowrap; }
+  .qty-row input {
+    width: 70px; padding: 8px 10px; text-align: center;
+    border: 1.5px solid #e5e7eb; border-radius: 10px;
+    font-size: 16px; font-weight: 700; color: #1a1a2e;
+    outline: none; background: #fafafa;
+  }
+  .qty-row input:focus { border-color: #2563eb; background: #fff; }
+
+  .input-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .input-row input {
+    flex: 1; padding: 13px 14px;
+    border: 1.5px solid #e5e7eb; border-radius: 10px;
+    font-size: 20px; font-weight: 600; font-family: 'Courier New', monospace;
+    letter-spacing: 0.08em; color: #1a1a2e; outline: none;
+    background: #fafafa; transition: border-color 0.15s;
+    text-align: center;
+  }
+  .input-row input:focus { border-color: #2563eb; background: #fff; }
+  .input-row input::placeholder { font-size: 14px; font-weight: 400; letter-spacing: 0; color: #bbb; }
+
+  .bc-preview {
+    background: #fafafa; border: 1.5px solid #e5e7eb; border-radius: 12px;
+    padding: 24px 16px 16px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 160px; margin-bottom: 16px;
+  }
+  .bc-preview img { max-height: 110px; width: auto; max-width: 100%; }
+  .bc-preview .bc-num {
+    font-family: 'Courier New', monospace; font-size: 20px; font-weight: 700;
+    letter-spacing: 0.12em; color: #1a1a2e; margin-top: 10px;
+  }
+  .bc-preview .bc-desc {
+    font-size: 15px; font-weight: 600; color: #333; margin-top: 6px;
+    text-align: center; max-width: 100%; overflow-wrap: anywhere;
+  }
+  .bc-placeholder { color: #ccc; font-size: 13px; text-align: center; line-height: 1.6; }
+
+  .desc-row { margin-bottom: 16px; }
+  .desc-row input {
+    width: 100%; padding: 11px 14px;
+    border: 1.5px solid #e5e7eb; border-radius: 10px;
+    font-size: 15px; color: #1a1a2e; outline: none;
+    background: #fafafa; transition: border-color 0.15s;
+  }
+  .desc-row input:focus { border-color: #2563eb; background: #fff; }
+  .desc-row input::placeholder { color: #bbb; }
+  .desc-count { font-size: 11px; color: #bbb; text-align: right; margin-top: 4px; }
+
+  .print-btn {
+    width: 100%; padding: 15px;
+    background: #1a1a2e; color: #fff; border: none; border-radius: 12px;
+    font-size: 16px; font-weight: 700; cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .print-btn:hover { background: #2d2d4e; }
+  .print-btn:active { transform: scale(0.99); }
+  .print-btn:disabled { background: #d1d5db; cursor: not-allowed; }
+
+  .conn-help {
+    background: #fffbeb; border: 1.5px solid #fcd34d; border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 16px; font-size: 13px; color: #92400e; line-height: 1.6;
+    display: none;
+  }
+  .conn-help.show { display: block; }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    padding: 12px 20px; border-radius: 12px;
+    font-size: 14px; font-weight: 600; color: #fff;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    opacity: 0; transition: opacity 0.3s; pointer-events: none;
+    white-space: nowrap; z-index: 999;
+  }
+  .toast.success { background: #16a34a; }
+  .toast.error { background: #dc2626; }
+  .toast.info { background: #2563eb; }
+  .toast.show { opacity: 1; }
+
+  .history-list { display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; }
+  .h-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; background: #fafafa; border-radius: 8px;
+    border: 1px solid #f0f0f0; font-size: 13px;
+  }
+  .h-code { font-family: 'Courier New', monospace; font-weight: 600; color: #1a1a2e; flex: 1; min-width: 0; }
+  .h-desc {
+    display: block; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 400; font-size: 11px; color: #888;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .h-qty { font-size: 11px; color: #888; }
+  .h-time { font-size: 11px; color: #bbb; }
+  .h-reprint {
+    font-size: 11px; font-weight: 600; color: #2563eb;
+    background: none; border: none; cursor: pointer; padding: 2px 6px;
+    border-radius: 6px;
+  }
+  .h-reprint:hover { background: #eff6ff; }
+  .empty-hist { color: #ccc; font-size: 13px; text-align: center; padding: 12px 0; }
+  .hist-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .clear-btn { background: none; border: none; font-size: 12px; color: #bbb; cursor: pointer; }
+  .clear-btn:hover { color: #888; }
+  .divider { height: 1px; background: #f0f0f0; margin: 16px 0; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>Label Printer</h1>
+    <p>Zebra ZQ511 · 2×3 label</p>
+  </div>
+  <div class="printer-status" id="printerStatus" onclick="checkPrinter()">
+    <div class="dot"></div>
+    <span id="printerStatusText">Tap to connect</span>
+  </div>
+</div>
+
+<!-- Printer IP config -->
+<div class="card">
+  <div class="label">Printer IP address</div>
+  <div class="ip-row">
+    <input type="text" id="ipInput" value="10.10.10.243" placeholder="e.g. 10.10.10.203" />
+    <button class="btn-check" onclick="checkPrinter()">Connect</button>
+  </div>
+  <div style="font-size:12px; color:#aaa;">Make sure this device is on the same WiFi network as the printer.</div>
+</div>
+
+<div class="conn-help" id="connHelp">
+  <strong>Cannot reach printer.</strong> Make sure:<br>
+  • This device is on the same WiFi as the printer<br>
+  • The printer is powered on and WiFi is connected<br>
+  • The IP address above is correct (print a config label to verify)
+</div>
+
+<!-- Barcode input -->
+<div class="card">
+  <div class="label">Barcode number</div>
+  <div class="input-row">
+    <input type="text" id="codeInput" placeholder="Scan or type barcode"
+      autocomplete="off" spellcheck="false" inputmode="numeric"
+      oninput="onCodeInput()" />
+  </div>
+
+  <div class="label">Description (optional)</div>
+  <div class="desc-row">
+    <input type="text" id="descInput" placeholder="e.g. Blue widget, Shelf A3"
+      autocomplete="off" maxlength="60" oninput="onCodeInput()" />
+    <div class="desc-count" id="descCount">0 / 60</div>
+  </div>
+
+  <div class="label">Number of copies</div>
+  <div class="qty-row">
+    <input type="number" id="qtyInput" value="1" min="1" max="99" />
+    <label>label(s)</label>
+  </div>
+
+  <div class="bc-preview" id="bcPreview">
+    <div class="bc-placeholder">Scan or type a barcode number<br>to preview it here</div>
+  </div>
+
+  <button class="print-btn" id="printBtn" onclick="printLabel()" disabled>
+    🖨️ Print Label
+  </button>
+</div>
+
+<!-- History -->
+<div class="card">
+  <div class="hist-header">
+    <div class="label" style="margin-bottom:0">Print history</div>
+    <button class="clear-btn" onclick="clearHistory()">Clear</button>
+  </div>
+  <div class="history-list" id="historyList">
+    <div class="empty-hist" id="emptyHist">No labels printed yet</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  let printHistory = [];
+
+  // Remember the printer IP on this device
+  const ipInput = document.getElementById('ipInput');
+  try { ipInput.value = localStorage.getItem('zq511_ip') || ipInput.value; } catch (e) {}
+  ipInput.addEventListener('change', () => {
+    try { localStorage.setItem('zq511_ip', ipInput.value.trim()); } catch (e) {}
+  });
+
+  function getPrinterUrl() {
+    const ip = document.getElementById('ipInput').value.trim();
+    return 'http://' + ip + '/pstprnt';
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // ── Printer check ──
+  async function checkPrinter() {
+    setStatus('checking', 'Connecting...');
+    const ip = document.getElementById('ipInput').value.trim();
+    if (!ip) { setStatus('error', 'Enter IP'); return; }
+
+    try {
+      // Send empty ZPL ping. The printer sends no CORS headers, so use no-cors:
+      // the fetch resolves (opaque) if the printer is reachable and rejects if not.
+      await fetch('http://' + ip + '/pstprnt', {
+        method: 'POST',
+        mode: 'no-cors',
+        body: '',
+        signal: AbortSignal.timeout(4000)
+      });
+      setStatus('connected', ip);
+      document.getElementById('connHelp').classList.remove('show');
+      showToast('✓ Printer connected', 'success');
+    } catch (e) {
+      setStatus('error', 'Offline');
+      document.getElementById('connHelp').classList.add('show');
+    }
+  }
+
+  function setStatus(state, text) {
+    const el = document.getElementById('printerStatus');
+    const txt = document.getElementById('printerStatusText');
+    el.className = 'printer-status' + (state === 'connected' ? ' connected' : state === 'error' ? ' error' : '');
+    txt.textContent = text;
+  }
+
+  // ── Barcode input ──
+  function onCodeInput() {
+    const val = document.getElementById('codeInput').value.trim();
+    const desc = document.getElementById('descInput').value.trim();
+    document.getElementById('descCount').textContent =
+      document.getElementById('descInput').value.length + ' / 60';
+    const preview = document.getElementById('bcPreview');
+    const btn = document.getElementById('printBtn');
+    if (!val) {
+      preview.innerHTML = '<div class="bc-placeholder">Scan or type a barcode number<br>to preview it here</div>';
+      btn.disabled = true;
+      return;
+    }
+    preview.innerHTML =
+      '<img src="https://barcodeapi.org/api/code128/' + encodeURIComponent(val) + '" alt="Barcode" />'
+      + '<div class="bc-num">' + escapeHtml(val) + '</div>'
+      + (desc ? '<div class="bc-desc">' + escapeHtml(desc) + '</div>' : '');
+    btn.disabled = false;
+  }
+
+  // ── ZPL builder — 2x3" label at 203dpi ──
+  // ZQ511 printhead is 2.83" wide = 576 dots max (the QLn420 used 609).
+  const PW = 576, MARGIN = 20;
+
+  function buildZPL(code, qty, desc) {
+    code = code.replace(/[\^~]/g, '');   // ^ and ~ are ZPL control characters
+    desc = (desc || '').replace(/[\^~]/g, '').replace(/\\&/g, '&');  // \& is a line break inside ^FB
+
+    // Estimate Code 128 width (auto mode packs digit pairs) and pick the
+    // widest bar module that still fits, then center the barcode.
+    const chars = /^\d+$/.test(code) ? Math.ceil(code.length / 2) : code.length;
+    const modules = 11 * (chars + 2) + 13;
+    let w = 3;
+    while (w > 1 && modules * w > PW - 2 * MARGIN) w--;
+    const x = Math.max(MARGIN, Math.round((PW - modules * w) / 2));
+
+    // 3" x 2" label at 203dpi = 576 printable wide x 406 tall
+    const zpl = [
+      '^XA',
+      '^CI28',   // UTF-8 text, so accented characters print correctly
+      '^MMT',
+      '^PW' + PW,
+      '^LL406',
+      '^LS0',
+      '^FO' + x + ',20',
+      '^BY' + w + ',3,200',
+      '^BCN,200,N,N,N,A',
+      '^FD' + code + '^FS',
+      '^FO' + MARGIN + ',230',
+      '^A0N,45,45',
+      '^FB' + (PW - 2 * MARGIN) + ',1,0,C,0',
+      '^FD' + code + '^FS'
+    ];
+    if (desc) {
+      // Up to 3 centered lines under the number (y 285–393)
+      zpl.push(
+        '^FO' + MARGIN + ',285',
+        '^A0N,32,32',
+        '^FB' + (PW - 2 * MARGIN) + ',3,4,C,0',
+        '^FD' + desc + '^FS'
+      );
+    }
+    zpl.push('^PQ' + qty + ',0,1,Y', '^XZ');
+    return zpl.join('\n');
+  }
+
+  // ── Print ──
+  async function printLabel() {
+    const code = document.getElementById('codeInput').value.trim();
+    const desc = document.getElementById('descInput').value.trim();
+    const qty = parseInt(document.getElementById('qtyInput').value) || 1;
+    if (!code) return;
+
+    const btn = document.getElementById('printBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Sending...';
+
+    const zpl = buildZPL(code, qty, desc);
+
+    try {
+      // no-cors: the printer sends no CORS headers; a rejection here means
+      // the printer could not be reached at all.
+      await fetch(getPrinterUrl(), {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain' },
+        body: zpl,
+        signal: AbortSignal.timeout(6000)
+      });
+      showToast('✓ ' + qty + ' label' + (qty > 1 ? 's' : '') + ' sent!', 'success');
+      setStatus('connected', document.getElementById('ipInput').value.trim());
+      addHistory(code, qty, desc);
+      document.getElementById('codeInput').value = '';
+      document.getElementById('descInput').value = '';
+      onCodeInput();
+    } catch (e) {
+      showToast('✗ Could not reach printer', 'error');
+      setStatus('error', 'Offline');
+      document.getElementById('connHelp').classList.add('show');
+    }
+
+    btn.disabled = false;
+    btn.textContent = '🖨️ Print Label';
+  }
+
+  // ── History ──
+  function addHistory(code, qty, desc) {
+    const now = new Date();
+    const time = now.getHours() + ':' + String(now.getMinutes()).padStart(2,'0');
+    printHistory.unshift({ code, qty, desc, time });
+    renderHistory();
+  }
+
+  function renderHistory() {
+    const list = document.getElementById('historyList');
+    const empty = document.getElementById('emptyHist');
+    if (!printHistory.length) {
+      empty.style.display = '';
+      while (list.children.length > 1) list.removeChild(list.lastChild);
+      return;
+    }
+    empty.style.display = 'none';
+    while (list.children.length > 1) list.removeChild(list.lastChild);
+    printHistory.forEach((h, i) => {
+      const div = document.createElement('div');
+      div.className = 'h-item';
+      div.innerHTML =
+        '<span class="h-code">' + escapeHtml(h.code)
+        + (h.desc ? '<span class="h-desc">' + escapeHtml(h.desc) + '</span>' : '') + '</span>'
+        + '<span class="h-qty">×' + h.qty + '</span>'
+        + '<span class="h-time">' + h.time + '</span>'
+        + '<button class="h-reprint" onclick="reprint(' + i + ')">Reprint</button>';
+      list.appendChild(div);
+    });
+  }
+
+  function reprint(i) {
+    const h = printHistory[i];
+    document.getElementById('codeInput').value = h.code;
+    document.getElementById('qtyInput').value = h.qty;
+    document.getElementById('descInput').value = h.desc || '';
+    onCodeInput();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function clearHistory() { printHistory = []; renderHistory(); }
+
+  // ── Toast ──
+  function showToast(msg, type) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast ' + type + ' show';
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+
+  // Enter to print
+  ['codeInput', 'descInput'].forEach(id =>
+    document.getElementById(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') printLabel();
+    }));
+</script>
+</body>
+</html>
