@@ -112,6 +112,31 @@
   }
   .bc-placeholder { color: #ccc; font-size: 13px; text-align: center; line-height: 1.6; }
 
+  .input-row input { min-width: 0; }
+  .scan-btn {
+    flex-shrink: 0; width: 54px;
+    background: #1a1a2e; color: #fff; border: none; border-radius: 10px;
+    font-size: 22px; cursor: pointer;
+  }
+  .scan-btn:hover { background: #2d2d4e; }
+
+  .scan-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,0.85);
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    padding: 16px;
+  }
+  .scan-overlay.show { display: flex; }
+  .scan-box {
+    width: 100%; max-width: 480px; background: #000;
+    border-radius: 12px; overflow: hidden; min-height: 200px;
+  }
+  .scan-msg { color: #fff; font-size: 14px; margin: 14px 0; text-align: center; line-height: 1.5; }
+  .scan-cancel {
+    padding: 12px 28px; background: #fff; color: #1a1a2e;
+    border: none; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer;
+  }
+
   .desc-row { margin-bottom: 16px; }
   .desc-row input {
     width: 100%; padding: 11px 14px;
@@ -225,6 +250,7 @@
     <input type="text" id="codeInput" placeholder="Scan or type barcode"
       autocomplete="off" spellcheck="false" inputmode="numeric"
       oninput="onCodeInput()" />
+    <button class="scan-btn" onclick="openScanner()" title="Scan with camera">📷</button>
   </div>
 
   <div class="label">Description (optional)</div>
@@ -287,6 +313,13 @@
   <div class="history-list" id="historyList">
     <div class="empty-hist" id="emptyHist">No labels printed yet</div>
   </div>
+</div>
+
+<!-- Camera scanner -->
+<div class="scan-overlay" id="scanOverlay">
+  <div class="scan-box" id="scanReader"></div>
+  <div class="scan-msg" id="scanMsg">Point the camera at a barcode</div>
+  <button class="scan-cancel" onclick="closeScanner()">Cancel</button>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -463,6 +496,77 @@
       document.getElementById('connHelp').classList.add('show');
       return false;
     }
+  }
+
+  // ── Camera scanning (html5-qrcode, loaded only when first used) ──
+  const SCANNER_LIB = 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js';
+  let scanner = null, scannerLoading = null;
+
+  function loadScannerLib() {
+    if (window.Html5Qrcode) return Promise.resolve();
+    if (!scannerLoading) {
+      scannerLoading = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = SCANNER_LIB;
+        s.onload = resolve;
+        s.onerror = () => { scannerLoading = null; reject(new Error('load failed')); };
+        document.head.appendChild(s);
+      });
+    }
+    return scannerLoading;
+  }
+
+  async function openScanner() {
+    const msg = document.getElementById('scanMsg');
+    document.getElementById('scanOverlay').classList.add('show');
+    msg.textContent = 'Starting camera...';
+
+    try {
+      await loadScannerLib();
+    } catch (e) {
+      msg.textContent = 'Could not load the scanner. Check the internet connection.';
+      return;
+    }
+
+    const F = Html5QrcodeSupportedFormats;
+    scanner = new Html5Qrcode('scanReader', {
+      verbose: false,
+      formatsToSupport: [F.CODE_128, F.CODE_39, F.CODE_93, F.EAN_13, F.EAN_8,
+                         F.UPC_A, F.UPC_E, F.ITF, F.CODABAR, F.QR_CODE, F.DATA_MATRIX],
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+    });
+
+    try {
+      await scanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: (w, h) => ({ width: Math.floor(w * 0.9), height: Math.floor(h * 0.5) }) },
+        onScanSuccess,
+        () => {}   // called for every frame without a barcode; ignore
+      );
+      msg.textContent = 'Point the camera at a barcode';
+    } catch (e) {
+      msg.textContent = 'Camera unavailable. Allow camera access for this page and try again.';
+      scanner = null;
+    }
+  }
+
+  async function onScanSuccess(text) {
+    if (!scanner) return;   // already handled a read from an earlier frame
+    await closeScanner();
+    if (navigator.vibrate) navigator.vibrate(100);
+    document.getElementById('codeInput').value = text.trim();
+    onCodeInput();
+    showToast('✓ Scanned ' + text.trim(), 'success');
+    document.getElementById('descInput').focus();
+  }
+
+  async function closeScanner() {
+    document.getElementById('scanOverlay').classList.remove('show');
+    if (!scanner) return;
+    const s = scanner;
+    scanner = null;
+    try { await s.stop(); } catch (e) {}
+    try { s.clear(); } catch (e) {}
   }
 
   // ── Hidden image mode: tap the "Label Printer" title 5 times ──
