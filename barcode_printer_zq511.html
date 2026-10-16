@@ -204,6 +204,15 @@
   .clear-btn { background: none; border: none; font-size: 12px; color: #bbb; cursor: pointer; }
   .clear-btn:hover { color: #888; }
   .divider { height: 1px; background: #f0f0f0; margin: 16px 0; }
+
+  .lookup-status { font-size: 12px; color: #aaa; line-height: 1.5; }
+  .lookup-status.loaded { color: #15803d; font-weight: 600; }
+  .bc-preview .bc-id {
+    font-size: 15px; font-weight: 700; color: #1a1a2e; margin-top: 6px;
+  }
+  .bc-preview .bc-nomatch {
+    font-size: 12px; color: #b45309; margin-top: 6px;
+  }
 </style>
 </head>
 <body>
@@ -230,17 +239,30 @@
 </div>
 
 <div class="conn-help" id="connHelp">
-  <strong>Cannot reach printer.</strong> Make sure:<br>
+  <div id="trustHelp" style="display:none; margin-bottom:12px;">
+    <strong>Approve the printer to connect.</strong> The browser needs your OK for the
+    printer's security certificate each time it restarts.
+    <button class="print-btn" onclick="trustPrinter()" style="margin:10px 0 8px; padding:12px; font-size:15px;">
+      🔓 Approve printer
+    </button>
+    On the warning, tap <em>Advanced</em> → <em>Proceed</em> (Chrome) or
+    <em>Show Details</em> → <em>visit this website</em> (iPhone), then come back to this tab.
+    It reconnects automatically.
+  </div>
+  <strong>Still can't connect?</strong> Make sure:<br>
   • This device is on the same WiFi as the printer<br>
   • The printer is powered on and WiFi is connected<br>
   • The IP address above is correct (print a config label to verify)
-  <div id="trustHelp" style="display:none; margin-top:10px;">
-    <strong>First time on this device?</strong> The printer uses its own security certificate,
-    so this device has to accept it once:<br>
-    1. Tap <a href="#" onclick="trustPrinter(); return false;" style="color:#92400e; font-weight:700;">Open printer page</a><br>
-    2. On the warning, tap <em>Advanced</em> → <em>Proceed</em> (Chrome) or <em>Show Details</em> → <em>visit this website</em> (iPhone)<br>
-    3. Come back here and tap <strong>Connect</strong> again
+</div>
+
+<!-- Item lookup data -->
+<div class="card">
+  <div class="label">Item lookup data</div>
+  <div class="lookup-status" id="lookupStatus">Loading item list…</div>
+  <div class="desc-row" style="margin-top:8px">
+    <input type="file" id="lookupFile" accept=".csv,text/csv" onchange="onLookupFile(this)" />
   </div>
+  <div class="lookup-status">Optional: pick a different CSV on this device to use instead.</div>
 </div>
 
 <!-- Barcode input -->
@@ -253,11 +275,11 @@
     <button class="scan-btn" onclick="openScanner()" title="Scan with camera">📷</button>
   </div>
 
-  <div class="label">Description (optional)</div>
+  <div class="label">Description (auto-filled from lookup)</div>
   <div class="desc-row">
     <input type="text" id="descInput" placeholder="e.g. Blue widget, Shelf A3"
-      autocomplete="off" maxlength="60" oninput="onCodeInput()" />
-    <div class="desc-count" id="descCount">0 / 60</div>
+      autocomplete="off" maxlength="120" oninput="onDescInput()" />
+    <div class="desc-count" id="descCount">0 / 120</div>
   </div>
 
   <div class="label">Number of copies</div>
@@ -346,9 +368,20 @@
     return getPrinterBase() + '/pstprnt';
   }
 
+  let trustOpened = false;
+
   function trustPrinter() {
+    trustOpened = true;
     window.open(getPrinterBase() + '/', '_blank');
   }
+
+  // After approving the printer in the other tab, reconnect when the user returns.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && trustOpened) {
+      trustOpened = false;
+      checkPrinter();
+    }
+  });
 
   if (PRINTER_SCHEME === 'https://') document.getElementById('trustHelp').style.display = '';
 
@@ -357,7 +390,7 @@
   }
 
   // ── Printer check ──
-  async function checkPrinter() {
+  async function checkPrinter(silent) {
     setStatus('checking', 'Connecting...');
     const ip = document.getElementById('ipInput').value.trim();
     if (!ip) { setStatus('error', 'Enter IP'); return; }
@@ -373,7 +406,7 @@
       });
       setStatus('connected', ip);
       document.getElementById('connHelp').classList.remove('show');
-      showToast('✓ Printer connected', 'success');
+      if (!silent) showToast('✓ Printer connected', 'success');
     } catch (e) {
       setStatus('error', 'Offline');
       document.getElementById('connHelp').classList.add('show');
@@ -387,12 +420,126 @@
     txt.textContent = text;
   }
 
+  // ── Item lookup ──
+  // barcode_lookup.csv next to this page is loaded automatically; a CSV picked
+  // on the device replaces it until the page is reloaded.
+  // Expected columns: serial_number, kind (item | area), ref_id, ref_name
+  const LOOKUP_URL = 'barcode_lookup.csv';
+  let lookup = new Map();
+  let lastLookupKey = null;      // barcode that the description was last auto-filled for
+  let descAutoFilled = false;    // true while the description text came from the lookup
+
+  function parseCSV(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);   // strip BOM
+    const rows = [];
+    let row = [], field = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; } else q = false;
+        } else field += c;
+      } else if (c === '"') q = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(field); field = '';
+        if (row.length > 1 || row[0] !== '') rows.push(row);
+        row = [];
+      } else field += c;
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  // Returns false if the CSV is missing the required columns.
+  function loadLookup(text, source) {
+    const rows = parseCSV(text);
+    const head = (rows.shift() || []).map(h => h.trim().toLowerCase());
+    const iSerial = head.indexOf('serial_number'), iKind = head.indexOf('kind'),
+          iId = head.indexOf('ref_id'), iName = head.indexOf('ref_name');
+    if (iSerial < 0 || iName < 0) return false;
+    const map = new Map();
+    let items = 0, areas = 0;
+    rows.forEach(r => {
+      const serial = (r[iSerial] || '').trim();
+      if (!serial) return;
+      const kind = iKind >= 0 && (r[iKind] || '').trim().toLowerCase() === 'area' ? 'area' : 'item';
+      map.set(serial, {
+        kind,
+        id: iId >= 0 ? (r[iId] || '').trim() : '',
+        name: (r[iName] || '').replace(/\s+/g, ' ').trim()
+      });
+      if (kind === 'area') areas++; else items++;
+    });
+    lookup = map;
+    lastLookupKey = null;
+    const st = document.getElementById('lookupStatus');
+    st.textContent = '✓ ' + map.size + ' barcodes loaded from ' + source
+      + ' (' + items + ' items, ' + areas + ' locations)';
+    st.className = 'lookup-status loaded';
+    onCodeInput();
+    return true;
+  }
+
+  async function loadDefaultLookup() {
+    const st = document.getElementById('lookupStatus');
+    try {
+      // no-cache: always pick up a newly uploaded CSV instead of an old copy
+      const res = await fetch(LOOKUP_URL, { cache: 'no-cache' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      if (lookup.size) return;   // a file was picked on the device meanwhile; keep it
+      if (!loadLookup(await res.text(), LOOKUP_URL)) {
+        st.textContent = '✗ ' + LOOKUP_URL + ' needs serial_number and ref_name columns.';
+        st.className = 'lookup-status';
+      }
+    } catch (e) {
+      if (lookup.size) return;
+      st.textContent = 'Item list not found (' + LOOKUP_URL + '). Labels print the barcode number only.';
+      st.className = 'lookup-status';
+    }
+  }
+
+  function onLookupFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (loadLookup(String(reader.result), file.name)) showToast('✓ Lookup data loaded', 'success');
+      else showToast('✗ CSV needs serial_number and ref_name columns', 'error');
+    };
+    reader.onerror = () => showToast('✗ Could not read that file', 'error');
+    reader.readAsText(file);
+  }
+
+  function findInfo(code) { return lookup.get(code) || null; }
+
+  function idLineText(info) {
+    return info.kind === 'area' ? 'Location' : 'Item ID: ' + info.id;
+  }
+
   // ── Barcode input ──
+  function onDescInput() {
+    descAutoFilled = false;   // the person is editing the text, so keep it
+    onCodeInput();
+  }
+
   function onCodeInput() {
     const val = document.getElementById('codeInput').value.trim();
-    const desc = document.getElementById('descInput').value.trim();
-    document.getElementById('descCount').textContent =
-      document.getElementById('descInput').value.length + ' / 60';
+    const descEl = document.getElementById('descInput');
+    const info = val ? findInfo(val) : null;
+
+    // Fill the description when a barcode matches; clear it again if the
+    // barcode changes to something with no match (only if we filled it).
+    const key = info ? val : null;
+    if (key !== lastLookupKey) {
+      lastLookupKey = key;
+      if (info) { descEl.value = info.name.slice(0, 120); descAutoFilled = true; }
+      else if (descAutoFilled) { descEl.value = ''; descAutoFilled = false; }
+    }
+
+    const desc = descEl.value.trim();
+    document.getElementById('descCount').textContent = descEl.value.length + ' / 120';
     const preview = document.getElementById('bcPreview');
     const btn = document.getElementById('printBtn');
     if (!val) {
@@ -403,6 +550,8 @@
     preview.innerHTML =
       '<img src="https://barcodeapi.org/api/code128/' + encodeURIComponent(val) + '" alt="Barcode" />'
       + '<div class="bc-num">' + escapeHtml(val) + '</div>'
+      + (info ? '<div class="bc-id">' + escapeHtml(idLineText(info)) + '</div>' : '')
+      + (!info && lookup.size ? '<div class="bc-nomatch">Not in lookup data</div>' : '')
       + (desc ? '<div class="bc-desc">' + escapeHtml(desc) + '</div>' : '');
     btn.disabled = false;
   }
@@ -411,9 +560,10 @@
   // ZQ511 printhead is 2.83" wide = 576 dots max (the QLn420 used 609).
   const PW = 576, MARGIN = 20;
 
-  function buildZPL(code, qty, desc) {
+  function buildZPL(code, qty, desc, info) {
     code = code.replace(/[\^~]/g, '');   // ^ and ~ are ZPL control characters
     desc = (desc || '').replace(/[\^~]/g, '').replace(/\\&/g, '&');  // \& is a line break inside ^FB
+    const idLine = info ? idLineText(info).replace(/[\^~]/g, '') : '';
 
     // Estimate Code 128 width (auto mode packs digit pairs) and pick the
     // widest bar module that still fits, then center the barcode.
@@ -423,7 +573,12 @@
     while (w > 1 && modules * w > PW - 2 * MARGIN) w--;
     const x = Math.max(MARGIN, Math.round((PW - modules * w) / 2));
 
-    // 3" x 2" label at 203dpi = 576 printable wide x 406 tall
+    // 3" x 2" label at 203dpi = 576 printable wide x 406 tall.
+    // With lookup info the barcode is shorter to make room for the ID line.
+    const barH = info ? 140 : 200;
+    const numY = info ? 170 : 230;
+    const numFont = info ? 40 : 45;
+    const fbW = PW - 2 * MARGIN;
     const zpl = [
       '^XA',
       '^CI28',   // UTF-8 text, so accented characters print correctly
@@ -432,20 +587,39 @@
       '^LL406',
       '^LS0',
       '^FO' + x + ',20',
-      '^BY' + w + ',3,200',
-      '^BCN,200,N,N,N,A',
+      '^BY' + w + ',3,' + barH,
+      '^BCN,' + barH + ',N,N,N,A',
       '^FD' + code + '^FS',
-      '^FO' + MARGIN + ',230',
-      '^A0N,45,45',
-      '^FB' + (PW - 2 * MARGIN) + ',1,0,C,0',
+      '^FO' + MARGIN + ',' + numY,
+      '^A0N,' + numFont + ',' + numFont,
+      '^FB' + fbW + ',1,0,C,0',
       '^FD' + code + '^FS'
     ];
-    if (desc) {
+    if (info) {
+      zpl.push(
+        '^FO' + MARGIN + ',218',
+        '^A0N,36,36',
+        '^FB' + fbW + ',1,0,C,0',
+        '^FD' + idLine + '^FS'
+      );
+      if (desc) {
+        // Name under the ID line (y 262–400); shrink the font for long names
+        const n = desc.length;
+        const size = n <= 24 ? 40 : n <= 90 ? 30 : 26;
+        const lines = n <= 24 ? 1 : n <= 90 ? 3 : 4;
+        zpl.push(
+          '^FO' + MARGIN + ',262',
+          '^A0N,' + size + ',' + size,
+          '^FB' + fbW + ',' + lines + ',3,C,0',
+          '^FD' + desc + '^FS'
+        );
+      }
+    } else if (desc) {
       // Up to 3 centered lines under the number (y 285–393)
       zpl.push(
         '^FO' + MARGIN + ',285',
         '^A0N,32,32',
-        '^FB' + (PW - 2 * MARGIN) + ',3,4,C,0',
+        '^FB' + fbW + ',3,4,C,0',
         '^FD' + desc + '^FS'
       );
     }
@@ -464,10 +638,12 @@
     btn.disabled = true;
     btn.textContent = '⏳ Sending...';
 
-    if (await sendZPL(buildZPL(code, qty, desc), qty)) {
+    if (await sendZPL(buildZPL(code, qty, desc, findInfo(code)), qty)) {
       addHistory(code, qty, desc);
       document.getElementById('codeInput').value = '';
       document.getElementById('descInput').value = '';
+      lastLookupKey = null;
+      descAutoFilled = false;
       onCodeInput();
     }
 
@@ -761,6 +937,12 @@
     document.getElementById(id).addEventListener('keydown', e => {
       if (e.key === 'Enter') printLabel();
     }));
+
+  // Check the printer as soon as the page opens, so the Approve button
+  // shows up right away if this browser session hasn't approved it yet.
+  if (document.getElementById('ipInput').value.trim()) checkPrinter(true);
+
+  loadDefaultLookup();
 </script>
 </body>
 </html>
