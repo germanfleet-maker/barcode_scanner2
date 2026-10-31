@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#1a1a2e">
+<title>Hunt Board Print</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f0f2f5;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 60px;
+    color: #1a1a2e;
+  }
+
+  .header { width: 100%; max-width: 480px; margin-bottom: 20px; }
+  .header h1 { font-size: 20px; font-weight: 700; }
+  .header p { font-size: 12px; color: #888; margin-top: 2px; }
+
+  .card {
+    background: #fff; border-radius: 16px; padding: 24px;
+    width: 100%; max-width: 480px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+    margin-bottom: 16px;
+  }
+
+  .label {
+    font-size: 11px; font-weight: 600; color: #999;
+    text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px;
+  }
+
+  .status {
+    font-size: 18px; font-weight: 700; text-align: center;
+    padding: 18px 12px; border-radius: 12px; margin-bottom: 16px;
+    background: #f3f4f6; color: #555;
+  }
+  .status.ok { background: #f0fdf4; color: #15803d; border: 1.5px solid #86efac; }
+  .status.err { background: #fef2f2; color: #dc2626; border: 1.5px solid #fca5a5; }
+  .status.busy { background: #eff6ff; color: #2563eb; border: 1.5px solid #93c5fd; }
+  .status small { display: block; font-size: 13px; font-weight: 500; margin-top: 6px; }
+
+  .tag {
+    background: #fafafa; border: 1.5px solid #e5e7eb; border-radius: 12px;
+    padding: 18px 16px; text-align: center; margin-bottom: 16px;
+  }
+  .tag .code {
+    font-family: 'Courier New', monospace; font-size: 26px; font-weight: 700;
+    letter-spacing: 0.12em;
+  }
+  .tag .id { font-size: 15px; font-weight: 700; margin-top: 6px; }
+  .tag .name { font-size: 14px; color: #555; margin-top: 6px; line-height: 1.4; }
+  .tag .qty { font-size: 12px; color: #888; margin-top: 8px; }
+
+  .btn {
+    width: 100%; padding: 14px;
+    background: #1a1a2e; color: #fff; border: none; border-radius: 12px;
+    font-size: 16px; font-weight: 700; cursor: pointer; margin-bottom: 8px;
+  }
+  .btn:hover { background: #2d2d4e; }
+  .btn:disabled { background: #d1d5db; cursor: not-allowed; }
+  .btn.light { background: #fff; color: #1a1a2e; border: 1.5px solid #e5e7eb; }
+
+  .ip-row { display: flex; gap: 8px; align-items: center; }
+  .ip-row input {
+    flex: 1; padding: 10px 12px;
+    border: 1.5px solid #e5e7eb; border-radius: 10px;
+    font-size: 14px; font-family: 'Courier New', monospace;
+    color: #1a1a2e; outline: none; background: #fafafa;
+  }
+  .ip-row input:focus { border-color: #2563eb; background: #fff; }
+  .hint { font-size: 12px; color: #aaa; margin-top: 8px; line-height: 1.5; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Hunt Board Print</h1>
+  <p>Zebra ZQ511 · 3×2 label · prints tags sent from the Hunt Board</p>
+</div>
+
+<div class="card">
+  <div class="status" id="status">Waiting for a tag from the Hunt Board…</div>
+
+  <div class="tag hidden" id="tag">
+    <div class="code" id="tagCode"></div>
+    <div class="id" id="tagId"></div>
+    <div class="name" id="tagName"></div>
+    <div class="qty" id="tagQty"></div>
+  </div>
+
+  <button class="btn hidden" id="printBtn" onclick="printJob()">🖨️ Print label</button>
+  <button class="btn light hidden" id="trustBtn" onclick="trustPrinter()">Approve printer, then come back</button>
+</div>
+
+<div class="card">
+  <div class="label">Printer IP address</div>
+  <div class="ip-row">
+    <input type="text" id="ipInput" value="10.10.11.75" placeholder="e.g. 10.10.11.75" />
+  </div>
+  <div class="hint">
+    This device must be on the same Wi-Fi as the printer. The first time on each device,
+    tap “Approve printer” and accept the security warning for the printer’s address.
+  </div>
+</div>
+
+<script>
+  // Same saved IP as the main label printer page (same site, same storage)
+  const ipInput = document.getElementById('ipInput');
+  // 10.10.10.243 was the printer's old address; devices that saved it get the new default
+  try {
+    const saved = localStorage.getItem('zq511_ip');
+    if (saved && saved !== '10.10.10.243') ipInput.value = saved;
+  } catch (e) {}
+  ipInput.addEventListener('change', () => {
+    try { localStorage.setItem('zq511_ip', ipInput.value.trim()); } catch (e) {}
+  });
+
+  // A secure (https) page such as GitHub Pages may not call http:// addresses,
+  // so talk to the printer over its own HTTPS port in that case.
+  const PRINTER_SCHEME = location.protocol === 'https:' ? 'https://' : 'http://';
+
+  function getPrinterBase() { return PRINTER_SCHEME + ipInput.value.trim(); }
+
+  let trustOpened = false;
+
+  function trustPrinter() {
+    trustOpened = true;
+    window.open(getPrinterBase() + '/', '_blank');
+  }
+
+  // After approving the printer in the other tab, print when the user returns.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && trustOpened) {
+      trustOpened = false;
+      if (job) printJob();
+    }
+  });
+
+  function setStatus(state, text, detail) {
+    const el = document.getElementById('status');
+    el.className = 'status' + (state ? ' ' + state : '');
+    el.textContent = text;
+    if (detail) {
+      const s = document.createElement('small');
+      s.textContent = detail;
+      el.appendChild(s);
+    }
+  }
+
+  // ── ZPL builder — 3x2" label at 203dpi, same layout as barcode_printer_zq511.html ──
+  // ZQ511 printhead is 2.83" wide = 576 dots max.
+  const PW = 576, MARGIN = 20;
+
+  function clean(s) { return (s || '').replace(/[\^~]/g, ''); }   // ^ and ~ are ZPL control characters
+
+  function buildZPL(j) {
+    const code = clean(j.code);
+    const name = clean(j.name).slice(0, 120);
+    const idLine = j.id ? (j.kind === 'area' ? 'Location' : 'Item ID: ' + clean(j.id)) : '';
+
+    // Estimate Code 128 width (auto mode packs digit pairs) and pick the
+    // widest bar module that still fits, then center the barcode.
+    const chars = /^\d+$/.test(code) ? Math.ceil(code.length / 2) : code.length;
+    const modules = 11 * (chars + 2) + 13;
+    let w = 3;
+    while (w > 1 && modules * w > PW - 2 * MARGIN) w--;
+    const x = Math.max(MARGIN, Math.round((PW - modules * w) / 2));
+
+    // With an ID line the barcode is shorter to make room for it.
+    const barH = idLine ? 140 : 200;
+    const numY = idLine ? 170 : 230;
+    const numFont = idLine ? 40 : 45;
+    const fbW = PW - 2 * MARGIN;
+    const zpl = [
+      '^XA',
+      '^CI28',   // UTF-8 text, so accented characters print correctly
+      '^MMT',
+      '^PW' + PW,
+      '^LL406',
+      '^LS0',
+      '^FO' + x + ',20',
+      '^BY' + w + ',3,' + barH,
+      '^BCN,' + barH + ',N,N,N,A',
+      '^FD' + code + '^FS',
+      '^FO' + MARGIN + ',' + numY,
+      '^A0N,' + numFont + ',' + numFont,
+      '^FB' + fbW + ',1,0,C,0',
+      '^FD' + code + '^FS'
+    ];
+    if (idLine) {
+      zpl.push(
+        '^FO' + MARGIN + ',218',
+        '^A0N,36,36',
+        '^FB' + fbW + ',1,0,C,0',
+        '^FD' + idLine + '^FS'
+      );
+      if (name) {
+        // Name under the ID line (y 262–400); shrink the font for long names
+        const n = name.length;
+        const size = n <= 24 ? 40 : n <= 90 ? 30 : 26;
+        const lines = n <= 24 ? 1 : n <= 90 ? 3 : 4;
+        zpl.push(
+          '^FO' + MARGIN + ',262',
+          '^A0N,' + size + ',' + size,
+          '^FB' + fbW + ',' + lines + ',3,C,0',
+          '^FD' + name + '^FS'
+        );
+      }
+    } else if (name) {
+      // Up to 3 centered lines under the number (y 285–393)
+      zpl.push(
+        '^FO' + MARGIN + ',285',
+        '^A0N,32,32',
+        '^FB' + fbW + ',3,4,C,0',
+        '^FD' + name + '^FS'
+      );
+    }
+    zpl.push('^PQ' + j.qty + ',0,1,Y', '^XZ');
+    return zpl.join('\n');
+  }
+
+  // ── Tag from the page link ──
+  // The Hunt Board artifact opens this page as
+  //   #code=151654&qty=1&name=...&kind=part&id=85294&autoprint=1
+  let job = null;
+
+  function readLinkJob() {
+    const p = new URLSearchParams(location.hash.slice(1));
+    const code = (p.get('code') || '').trim();
+    if (!code) return;
+    job = {
+      code,
+      qty: Math.min(99, Math.max(1, parseInt(p.get('qty')) || 1)),
+      name: (p.get('name') || '').replace(/\s+/g, ' ').trim(),
+      id: (p.get('id') || '').trim(),
+      kind: (p.get('kind') || '').trim().toLowerCase()
+    };
+
+    // Drop the tag from the address so a reload doesn't print it again
+    history.replaceState(null, '', location.pathname + location.search);
+
+    document.getElementById('tag').classList.remove('hidden');
+    document.getElementById('tagCode').textContent = job.code;
+    document.getElementById('tagId').textContent =
+      job.id ? (job.kind === 'area' ? 'Location' : 'Item ID: ' + job.id) : '';
+    document.getElementById('tagName').textContent = job.name;
+    document.getElementById('tagQty').textContent = job.qty + ' label' + (job.qty > 1 ? 's' : '');
+    document.getElementById('printBtn').classList.remove('hidden');
+
+    if (p.get('autoprint') === '1') printJob();
+    else setStatus('', 'Ready', 'Tap Print to send this tag to the Zebra.');
+  }
+
+  // ── Print ──
+  let sending = false;
+
+  async function printJob() {
+    if (!job || sending) return;
+    sending = true;
+    const btn = document.getElementById('printBtn');
+    btn.disabled = true;
+    setStatus('busy', 'Sending to printer…');
+    try {
+      // no-cors: the printer sends no CORS headers; a rejection here means
+      // the printer could not be reached at all.
+      await fetch(getPrinterBase() + '/pstprnt', {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain' },
+        body: buildZPL(job),
+        signal: AbortSignal.timeout(10000)
+      });
+      setStatus('ok', '✓ ' + job.qty + ' label' + (job.qty > 1 ? 's' : '') + ' sent',
+        'You can close this tab.');
+      document.getElementById('trustBtn').classList.add('hidden');
+    } catch (e) {
+      setStatus('err', '✗ Could not reach printer',
+        'Check the Wi-Fi and printer power. First time on this device? Tap “Approve printer”.');
+      if (PRINTER_SCHEME === 'https://') document.getElementById('trustBtn').classList.remove('hidden');
+    }
+    btn.disabled = false;
+    sending = false;
+  }
+
+  // The artifact may reuse this tab; a new tag then arrives as a hash change.
+  window.addEventListener('hashchange', readLinkJob);
+  readLinkJob();
+</script>
+</body>
+</html>
